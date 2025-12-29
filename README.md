@@ -1,101 +1,63 @@
-vlsub
-=====
+# bettervlsub (modern VLSub)
 
-VLC extension to download subtitles from opensubtitles.org
+VLC Lua extension to search and download subtitles from **OpenSubtitles.com** using the current REST API. This fork refreshes the original VLSub codebase to keep it responsive on modern VLC releases and to work with the new OpenSubtitles authentication model.
 
+## Compatibility
 
-Author: Guillaume Le Maout  
-Contact: http://addons.videolan.org/messages/?action=newmessage&username=exebetche  
-Bug report: http://addons.videolan.org/content/show.php/?content=148752  
+* Designed for VLC 3.x and tested with recent VLC 4.0 nightlies.
+* Uses the VLC Lua *extension* API (`View > VLsub`), no external Lua modules required.
+* Network operations run with explicit timeouts and backoff to avoid the “Not Responding” freezes reported on older builds.
 
-#### INSTALLATION:
-Vlsub doesn't work on Vlc 2.1, use one of these instead:
-* [vlc 2.0](http://download.videolan.org/pub/videolan/vlc/2.0.8/)
-* [vlc 2.2](https://www.videolan.org/vlc/releases/2.2.0.html)
+## Installation
 
-Create a directory "extensions" at this location if it doesn't exists, then extract the file "vlsub.lua" from the archive inside:
-* Windows (all users): %ProgramFiles%\VideoLAN\VLC\lua\extensions\
-* Windows (current user): %APPDATA%\vlc\lua\extensions\
-* Linux (all users): /usr/lib/vlc/lua/extensions/
-* Linux (current user): ~/.local/share/vlc/lua/extensions/
-* Mac OS X (all users): /Applications/VLC.app/Contents/MacOS/share/lua/extensions/
-* Mac OS X (current user): /Users/%your_name%/Library/Application Support/org.videolan.vlc/lua/extensions/
+Install `vlsub.lua` and the `locale` directory into your VLC extensions folder (create the `extensions` directory if it does not exist):
 
-To install the translations, copy the directory named "locale" into the VLSub working directory :
-* To know this directory, once VLsub is installed as explained above, launCh VLC and open VLsub, and click "show config", and you will see it there.
+* **Windows (all users):** `%ProgramFiles%\VideoLAN\VLC\lua\extensions\`
+* **Windows (current user):** `%APPDATA%\vlc\lua\extensions\`
+* **Linux (all users):** `/usr/lib/vlc/lua/extensions/`
+* **Linux (current user):** `~/.local/share/vlc/lua/extensions/`
+* **macOS (all users):** `/Applications/VLC.app/Contents/MacOS/share/lua/extensions/`
+* **macOS (current user):** `/Users/<you>/Library/Application Support/org.videolan.vlc/lua/extensions/`
 
-#### USAGE:
-* Start Vlc
-* Start your video
-* Click on the menu View > VLSub or VLC > Extension > VLSub on Mac OS X
-* Click on "Search by hash" or "Search by name"
-* Select a subtitles file on the list
-* Click on "Download selection"
-* That's it, the subtitles should appear on your video. 
-* If you're not happy with your subtitles (wrong sync etc), you can select an other one and click "Download" again, that will erase the previous one and load it automatically.
+Translations live under `locale/` and can be dropped alongside `vlsub.lua` in the working directory shown in the Config view (“Show config”).
 
-#### Limitation:
+## Configuration (new OpenSubtitles REST API)
 
-Due to some bugs on Windows, if the path to your video contain non-english characters, the extension will not be able to save subtitles in this directory automatically (it will propose you to save it manually) and the "search by hash" method might be slower.
+Open the extension, switch to **Config**, and set:
 
--> If possible, use a directory with english (ASCII) characters only to store your videos (on Windows only).
+* **OpenSubtitles API key (required):** create one from your [OpenSubtitles.com profile](https://www.opensubtitles.com/en/consumers). The extension will not search without it.
+* **User access token (optional):** paste a personal token for higher download quotas. If omitted, anonymous limits apply.
+* **Request timeout / retry attempts:** tune if you are on a slow or flaky network.
+* Other legacy options (default language, working directory, add language code to filename, remove tags) remain available.
 
-#### Changelog:
+No credentials are hardcoded; everything is stored in the VLSub config file within the working directory.
 
-##### 2017-01-20 (version 0.10.2)
-- Fixed a bug with subtitle downloading with HTTP 1.1
-- Added Finnish language
+## Usage
 
-##### 2016-11-05 (version 0.10.0)
-- Support http chunked transfer encoding
+1. Start VLC and play your video.
+2. Open **View > VLsub** (or **VLC > Extension > VLSub** on macOS).
+3. Pick a subtitle language and search either by **hash** (best sync) or **name**.
+4. Select a result and click **Download selection**.
+   * If “Manual download” is selected or there is no active video input, a browser link is shown instead.
+5. The subtitle is saved next to the video when possible; otherwise, VLSub falls back to the configured working directory.
 
-##### 2014-09-21
-- Improve http response handle for large header
+## Troubleshooting
 
-##### 2014-09-12 (version 0.9.13)
-- Fix error with new http 301 redirection
+* **API errors (401/403):** confirm the API key and, if required, your user token in Config.
+* **Rate limits (429):** VLSub now backs off automatically. Wait a few seconds and retry.
+* **Timeouts or empty results:** check your network and increase the timeout slider in Config.
+* **Non‑ASCII Windows paths:** VLC can still struggle to write to some paths. If saving fails, the file will be written to the configured working directory instead.
+* **Enable debug logging in VLC:**
+  * GUI: `Tools > Messages`, set verbosity to `2 (debug)` before running VLSub.
+  * CLI: `vlc --verbose=2 --file-logging --logfile=vlsub.log` then reproduce the issue. The log will include REST requests (without secrets) and status codes.
 
-##### 2014-08-19 (version 0.9.12)
-- Fix subtitles loading on Vlc 2.2
+## Manual test checklist
 
-##### 2014-05-08 (version 0.9.11)
-- Fix a bug due to opensubtitles header modifications
-- Add a message at startup to warn it's not gonna work if net module not present 
+* **Windows / macOS / Linux:** install the extension, set an API key, search by hash on a local file, then download and verify the subtitle loads automatically.
+* **Slow/unstable network:** lower the timeout to force a retry path, ensure the UI stays responsive, and confirm the rate-limit message appears when expected.
+* **Working directory fallback:** temporarily point the working directory to a writable folder and confirm downloads land there when the video directory is read-only.
 
-##### 2013-09-05 (version 0.9.10)
-- Add possibility to set opensubtitles.org username/password in config menu to avoid download limit to unlogged users
+## Notes
 
-##### 2013-08-31 (version 0.9.9)
-- Rewrite configuration process from scratch to avoid blocking problem with Win 8 + windows username with special characters
-- Allow user to set VLSub's working directory from config interface 
-
-##### 2013-07-25 (version 0.9.8)
-- Add a method to search subtitles for videos file inside an archive 
-- Add a method for video with specials characters in its name or path on Windows.
-
-##### 2013-07-13 (version 0.9.6)
-- Add an installer for Windows 7  
-- Bug fix: display download behaviour display on xp  
-- Bug fix: Add error message if github CA certificate is not present when downloading translations  
-- Bug fix: closing dialog on config menu on OS X  
-
-##### 2013-07-04 (version 0.9.5)
-- Add interface localization option
-
-##### 2013-04-25 (version 0.9)
-- Simplified interface  
-- Bug fix with subrip format (".sub") subtitles  
-- Add a success message when subtitles are loaded  
-- Display a download link to subtitles if direct download fail
-
-##### 2012-12-18 (version 0.8)
-- [Benoit Vallee] Fixed subtitle downloading when special characters are present on the video path  
-- [Benoit Vallee] Fixed zip file deletion after subtitle has been extracted  
-
-##### 2012-10-17 (version 0.7)
-- [thePanz] Added subtitle language in listing  
-- [thePanz] Added subtitle language in downloaded file (avoid filename collisions during download)  
-
-##### version 0.6
-- Use definitive user agent for opensubtitle API  
-- Fix a bug when video file path contains accents/special characters on linux (same bug on windows not corrected yet)  
+* VLSub now speaks to `api.opensubtitles.com` over the REST API; the legacy XML-RPC flow has been removed.
+* Operations yield regularly to VLC to prevent UI freezes during hashing or large downloads. If a request stalls beyond the configured timeout, an explicit error is shown.
