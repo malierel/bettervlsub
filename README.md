@@ -126,4 +126,11 @@ To install the translations, copy the directory named "locale" into the VLSub wo
 
 ##### version 0.6
 - Use definitive user agent for opensubtitle API  
-- Fix a bug when video file path contains accents/special characters on linux (same bug on windows not corrected yet)  
+- Fix a bug when video file path contains accents/special characters on linux (same bug on windows not corrected yet)
+
+## License
+
+BetterSub is released under the **GNU General Public License v2.0 or later (GPL-2.0-or-later)**.
+
+This project is based on **VLSub** by exebetche, a VLC extension distributed via addons.videolan.org.
+VLSub does not include an explicit license file in its original repository, but as a VLC ecosystem extension it is considered GPL-compatible.
