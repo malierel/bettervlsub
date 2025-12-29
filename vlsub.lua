@@ -1683,6 +1683,11 @@ openSub = {
           return false
         end
       end
+      if chunk_counter >= max_chunks then
+        vlc.msg.err("[VLSub] Aborting hash read: too many chunks")
+        setError(lang["mess_timeout"])
+        return false
+      end
       data_end = string.sub((dataTmp1..dataTmp2), -chunk_size)
     elseif not file_exist(openSub.file.path) 
     and openSub.file.stat then
@@ -1713,6 +1718,11 @@ openSub = {
           if keep_running == false then
             return false
           end
+        end
+        if i > max_chunks then
+          vlc.msg.err("[VLSub] Aborting hash read: too many chunks")
+          setError(lang["mess_timeout"])
+          return false
         end
       end
       
@@ -2361,6 +2371,11 @@ local function http_req_once(host, port, request, protocol, tls_warned)
       body = body .. chunk_data
     end
     buf = chunk_state.buffer
+  end
+  
+  if not header then
+    log_err("HTTP response missing headers or truncated")
+    return 422, ""
   end
   
   if not chunked then
