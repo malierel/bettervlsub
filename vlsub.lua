@@ -333,7 +333,7 @@ local input_table = {} -- General widget id reference
 local select_conf = {} -- Drop down widget / option table association 
 
 local app_name = "VLsub";
-local app_version = "0.10.4";
+local app_version = "0.10.5";
 local app_useragent = app_name.." "..app_version;
 
 local function log_debug(message)
@@ -361,6 +361,22 @@ local function ui_yield()
     dlg:update()
   end
   safe_mwait(1)
+end
+
+local function ui_yield_if_needed(last_yield_mdate, interval_ms)
+  if not dlg then
+    return last_yield_mdate, false
+  end
+
+  local interval = (interval_ms or 15) * 1000
+  local now = vlc.misc and vlc.misc.mdate() or 0
+
+  if now == 0 or not last_yield_mdate or (now - last_yield_mdate) >= interval then
+    ui_yield()
+    last_yield_mdate = now
+  end
+
+  return last_yield_mdate, true
 end
 
             --[[ VLC extension stuff ]]--
@@ -1624,7 +1640,10 @@ openSub = {
     local size
     local chunk_size = 65536
     local chunk_counter = 0
-    local max_chunks = 8192
+    local max_chunks_stream = 16384
+    local expected_chunks = nil
+    local last_yield = nil
+    local keep_running = true
         
     -- Get data for hash calculation
     if openSub.file.is_archive then
@@ -1636,8 +1655,11 @@ openSub = {
       data_start = file:read(chunk_size) or ""
       size = string.len(data_start)
       data_end = file:read(chunk_size)
+      if openSub.file.stat and openSub.file.stat.size then
+        expected_chunks = math.ceil(openSub.file.stat.size / chunk_size) + 4
+      end
       
-      while data_end and chunk_counter < max_chunks do
+      while data_end do
         size = size + string.len(data_end or "")
         dataTmp1 = dataTmp2
         dataTmp2 = data_end or ""
@@ -1645,9 +1667,21 @@ openSub = {
         chunk_counter = chunk_counter + 1
         if chunk_counter % 8 == 0 then
           setMessage(openSub.actionLabel..": "..progressBarContent(0))
-          ui_yield()
+          last_yield, keep_running = ui_yield_if_needed(last_yield, 25)
+          if keep_running == false then
+            return false
+          end
         end
         collectgarbage()
+        if expected_chunks and chunk_counter > expected_chunks then
+          vlc.msg.err("[VLSub] Aborting hash read: exceeded expected chunks")
+          setError(lang["mess_timeout"])
+          return false
+        elseif not expected_chunks and chunk_counter > max_chunks_stream then
+          vlc.msg.err("[VLSub] Aborting hash read: too many chunks (stream?)")
+          setError(lang["mess_not_local"])
+          return false
+        end
       end
       if chunk_counter >= max_chunks then
         vlc.msg.err("[VLSub] Aborting hash read: too many chunks")
@@ -1675,11 +1709,15 @@ openSub = {
       file:read(decal)
       
       local chunk_total = math.floor(((size-decal)/chunk_size))-2
+      expected_chunks = chunk_total + 2
       for i = 1, chunk_total do
         file:read(chunk_size)
         if i % 32 == 0 then
           setMessage(openSub.actionLabel..": "..progressBarContent(i * chunk_size / size * 100))
-          ui_yield()
+          last_yield, keep_running = ui_yield_if_needed(last_yield, 25)
+          if keep_running == false then
+            return false
+          end
         end
         if i > max_chunks then
           vlc.msg.err("[VLSub] Aborting hash read: too many chunks")
@@ -1708,6 +1746,7 @@ openSub = {
       end
       size = end_pos
       data_end = file:read(chunk_size) or ""
+      expected_chunks = math.ceil((size or chunk_size) / chunk_size) + 1
       file = nil
     end
     
@@ -2005,6 +2044,7 @@ function dump_zip(url, dir, subfileName)
     vlc.msg.dbg("[VLsub] Cant touch:"..tmpFileName)
     if openSub.conf.os == "win" then
       -- todo for windows
+      setError(lang["mess_download_io_error"].." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
       return false
     else
       -- using tmp dir to download
@@ -2015,7 +2055,7 @@ function dump_zip(url, dir, subfileName)
   local tmpFile, open_err = io.open(tmpFileName, "wb")
   if not tmpFile then
     vlc.msg.err("[VLsub] Unable to open temp file: "..tostring(open_err))
-    setError(lang["mess_download_io_error"])
+    setError(lang["mess_download_io_error"].." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
     return false
   end
   
@@ -2023,7 +2063,7 @@ function dump_zip(url, dir, subfileName)
   if not ok then
     vlc.msg.err("[VLsub] Unable to write temp file: "..tostring(write_err))
     tmpFile:close()
-    setError(lang["mess_download_io_error"])
+    setError(lang["mess_download_io_error"].." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
     return false
   end
   tmpFile:flush()
@@ -2118,15 +2158,19 @@ function get(url)
   end
 end
 
-local function http_req_once(host, port, request, protocol)
+local function http_req_once(host, port, request, protocol, tls_warned)
   local connect_fn = vlc.net.connect_tcp
   local requested_https = protocol == "https"
+  local tls_notice_shown = tls_warned or false
 
   if requested_https then
     if vlc.net.connect_ssl then
       connect_fn = vlc.net.connect_ssl
     else
-      setMessage(error_tag(lang["mess_tls_unsupported"]).." - falling back to HTTP")
+      if not tls_notice_shown then
+        setMessage(error_tag(lang["mess_tls_unsupported"]).." - falling back to HTTP")
+        tls_notice_shown = true
+      end
       log_err("TLS/SSL unsupported, retrying over HTTP for host "..tostring(host))
       protocol = "http"
       port = 80
@@ -2136,6 +2180,12 @@ local function http_req_once(host, port, request, protocol)
   end
 
   local fd = connect_fn(host, port)
+  local function close_socket()
+    if fd then
+      pcall(vlc.net.close, fd)
+      fd = nil
+    end
+  end
   if not fd then 
     setError(lang["mess_no_response"])
     return nil, "" 
@@ -2154,9 +2204,25 @@ local function http_req_once(host, port, request, protocol)
   local timeout = (openSub.option.requestTimeoutMs or 15000) * 1000
   local pollInterval = openSub.option.requestPollIntervalMs or 250
   local chunk_state = {buffer = "", done = false}
+  local header_yield = nil
+  local chunk_yield = nil
+  local keep_running = true
+  local MAX_CHUNK_BUFFER = 2 * 1024 * 1024 -- 2MB cap
+  local MAX_CHUNK_LINE = 65536 -- 64KB cap
 
   local function parse_chunked(buffer)
     chunk_state.buffer = chunk_state.buffer .. buffer
+    if #chunk_state.buffer > MAX_CHUNK_BUFFER then
+      return nil, "chunk buffer too large"
+    end
+
+    local newline_pos = string.find(chunk_state.buffer, "\n", 1, true)
+    if not newline_pos and #chunk_state.buffer > MAX_CHUNK_LINE then
+      return nil, "chunk line too long"
+    elseif newline_pos and newline_pos - 1 > MAX_CHUNK_LINE then
+      return nil, "chunk line too long"
+    end
+
     local out = {}
 
     while true do
@@ -2223,6 +2289,7 @@ local function http_req_once(host, port, request, protocol)
       local chunk_data, parse_err = parse_chunked(buf)
       if parse_err then
         log_err("Chunk parse error: "..tostring(parse_err))
+        close_socket()
         return 422, ""
       end
 
@@ -2231,6 +2298,11 @@ local function http_req_once(host, port, request, protocol)
       end
 
       buf = chunk_state.buffer
+      chunk_yield, keep_running = ui_yield_if_needed(chunk_yield, 15)
+      if keep_running == false then
+        close_socket()
+        return 499, ""
+      end
       if chunk_state.done then
         break
       end
@@ -2251,12 +2323,54 @@ local function http_req_once(host, port, request, protocol)
 
     if startTime ~= 0 and vlc.misc and vlc.misc.mdate() - startTime > timeout then
       log_err("HTTP request timed out after "..tostring(openSub.option.requestTimeoutMs).."ms")
+      close_socket()
       return 408, ""
     end
 
     vlc.net.poll(pollfds, pollInterval)
-    ui_yield()
+    header_yield, keep_running = ui_yield_if_needed(header_yield, pollInterval)
+    if keep_running == false then
+      close_socket()
+      return 499, ""
+    end
     response = vlc.net.recv(fd, 1024)
+  end
+
+  if not header and buf ~= "" then
+    headerStr, body = buf:match("(.-\r?\n)\r?\n(.*)")
+    if headerStr then
+      header = parse_header(headerStr);
+      status = tonumber(header["statuscode"]) or 0;
+      contentLength = tonumber(header["Content-Length"]);
+      if not contentLength then
+        contentLength = tonumber(header["X-Uncompressed-Content-Length"])
+      end
+      
+      TransferEncoding = trim(header["Transfer-Encoding"]);
+      chunked = (TransferEncoding=="chunked");
+      
+      buf = body or "";
+      body = body or ""
+    end
+  end
+  
+  if not header then
+    log_err("HTTP response missing headers or truncated")
+    close_socket()
+    return 422, ""
+  end
+
+  if chunked and buf ~= "" and not chunk_state.done then
+    local chunk_data, parse_err = parse_chunked(buf)
+    if parse_err then
+      log_err("Chunk parse error after socket close: "..tostring(parse_err))
+      close_socket()
+      return 422, ""
+    end
+    if chunk_data and #chunk_data > 0 then
+      body = body .. chunk_data
+    end
+    buf = chunk_state.buffer
   end
   
   if not header then
@@ -2268,6 +2382,7 @@ local function http_req_once(host, port, request, protocol)
     body = buf
   elseif chunked and not chunk_state.done then
     log_err("Chunked transfer ended unexpectedly")
+    close_socket()
     return 422, ""
   end
   
@@ -2278,9 +2393,11 @@ local function http_req_once(host, port, request, protocol)
     :gsub("^([^%s]+ )([^%s]+)", "%1"..path_redirect)
     :gsub("(Host: )([^\n]*)", "%1"..host_redirect)
 
-    return http_req_once(host_redirect, port, request, protocol)
+    close_socket()
+    return http_req_once(host_redirect, port, request, protocol, tls_notice_shown)
   end
 
+  close_socket()
   return status, body
 end
 

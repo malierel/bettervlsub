@@ -50,6 +50,11 @@ To install the translations, copy the directory named "locale" into the VLSub wo
 
 #### Changelog:
 
+##### 2024-05-02 (version 0.10.5)
+- Close sockets after each request, yield during slow headers, and cap chunked-transfer buffers to avoid freezes or leaks.
+- Bound hash reads using real file sizes where possible, added cancellation-aware yields, and improved manual download fallback when temp files fail.
+- Refined TLS downgrade messaging to apply per request without spamming the UI.
+
 ##### 2024-05-01 (version 0.10.4)
 - Harden chunked HTTP transfer parsing to avoid crashes on partial or malformed responses.
 - Gracefully fall back to HTTP when TLS/SSL is unavailable, with clearer diagnostics surfaced in the UI and VLC debug log.
