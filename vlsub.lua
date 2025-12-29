@@ -29,6 +29,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
 -- ...
 
 local options = {
+  config_version = 2,
   language = nil,
   downloadBehaviour = 'save',
   langExt = false,
@@ -164,15 +165,16 @@ local options = {
     mess_no_response = 'Server not responding',
     mess_http_error = 'HTTP status error',
     mess_timeout = 'Request timed out',
-    mess_tls_unsupported = 'HTTPS requested but TLS/SSL is unavailable in this VLC build',
+    mess_tls_unsupported = 'HTTPS requested but TLS/SSL is unavailable in this VLC build; enable HTTP endpoints or use a VLC build with SSL',
     mess_parse_error = 'Response parse/format error',
     mess_download_io_error = 'Unable to write subtitles to disk',
     mess_manual_fallback = 'Download manually from the provided link',
+    mess_rename_failed = 'Subtitle download completed but could not replace the target file. Please download manually or close other programs using the file',
     mess_unauthorized = 'Request unauthorized',
     mess_expired = 'Session expired, retrying',
-    mess_overloaded = 'Server overloaded, please retry later',
+    mess_overloaded = 'OpenSubtitles is rate-limiting or busy; please try again later',
     mess_no_input = 'Please use this method during playing',
-    mess_not_local = 'Hash search requires a local file; use Search by name for streams',
+    mess_not_local = 'Hash search works only for local files. Switching to name search.',
     mess_not_found = 'File not found',
     mess_not_found2 = 'File not found (illegal character?)',
     mess_no_selection = 'No subtitles selected',
@@ -333,7 +335,7 @@ local input_table = {} -- General widget id reference
 local select_conf = {} -- Drop down widget / option table association 
 
 local app_name = "VLsub";
-local app_version = "0.10.5";
+local app_version = "0.10.6";
 local app_useragent = app_name.." "..app_version;
 
 local function log_debug(message)
@@ -356,6 +358,19 @@ local function safe_mwait(ms)
   end
 end
 
+local function clamp_config_value(value, min_v, max_v, default_v)
+  if type(value) ~= "number" then
+    return default_v
+  end
+  if min_v and value < min_v then
+    return min_v
+  end
+  if max_v and value > max_v then
+    return max_v
+  end
+  return value
+end
+
 local function ui_yield()
   if dlg and dlg.update then
     dlg:update()
@@ -365,7 +380,7 @@ end
 
 local function ui_yield_if_needed(last_yield_mdate, interval_ms)
   if not dlg then
-    return last_yield_mdate, false
+    return last_yield_mdate, true
   end
 
   local interval = (interval_ms or 15) * 1000
@@ -376,7 +391,7 @@ local function ui_yield_if_needed(last_yield_mdate, interval_ms)
     last_yield_mdate = now
   end
 
-  return last_yield_mdate, true
+  return last_yield_mdate, not (dlg.closed)
 end
 
             --[[ VLC extension stuff ]]--
@@ -719,6 +734,24 @@ end
 
             --[[ Config & interface localization]]--
 
+local function sanitize_config_options()
+  local cfg = openSub.option
+  cfg.requestTimeoutMs = tonumber(cfg.requestTimeoutMs)
+  cfg.requestPollIntervalMs = tonumber(cfg.requestPollIntervalMs)
+  cfg.requestMaxRetries = tonumber(cfg.requestMaxRetries)
+  local current_version = tonumber(cfg.config_version) or 1
+  if current_version < 2 then
+    cfg.requestTimeoutMs = cfg.requestTimeoutMs or 15000
+    cfg.requestPollIntervalMs = cfg.requestPollIntervalMs or 250
+    cfg.requestMaxRetries = cfg.requestMaxRetries or 2
+  end
+
+  cfg.requestTimeoutMs = clamp_config_value(cfg.requestTimeoutMs, 3000, 60000, 15000)
+  cfg.requestPollIntervalMs = clamp_config_value(cfg.requestPollIntervalMs, 50, 2000, 250)
+  cfg.requestMaxRetries = clamp_config_value(cfg.requestMaxRetries, 0, 5, 2)
+  cfg.config_version = 2
+end
+
 function check_config()
   -- Make a copy of english translation to use it as default 
   -- in case some element aren't translated in other translations
@@ -883,6 +916,7 @@ function check_config()
   
   lang = nil
   lang = options.translation -- just a short cut
+  sanitize_config_options()
   
   if not vlc.net or not vlc.net.poll then
     dlg = vlc.dialog(
@@ -941,6 +975,7 @@ function load_config()
     end
   end
   collectgarbage()
+  sanitize_config_options()
 end
 
 function load_transl(path)
@@ -1090,6 +1125,7 @@ function apply_config()
   
   if openSub.conf.dirPath and
   not dir_path_err then
+    sanitize_config_options()
     local config_saved = save_config()
     trigger_menu(1)
     if not config_saved then
@@ -1287,13 +1323,20 @@ openSub = {
       
       if response then
         if response.status == "200 OK" then
-          return openSub.methods[methodName]
+          local cb_ok = openSub.methods[methodName]
             .callback(response)
+          responseStr = nil
+          response = nil
+          collectgarbage()
+          return cb_ok
         elseif response.status == "406 No session" then
           openSub.request("LogIn")
         elseif response then
           setError(lang["mess_http_error"]..
             " '"..tostring(response.status).."' ("..status..")")
+          responseStr = nil
+          response = nil
+          collectgarbage()
           return false
         end
       else
@@ -1309,20 +1352,35 @@ openSub = {
         openSub.request(methodName)
       end
       return false
-    elseif status == 503 then 
+    elseif status == 429 or status == 503 then 
       setError(lang["mess_overloaded"])
+      responseStr = nil
+      response = nil
+      return false
+    elseif status and status >= 400 and status < 500 then
+      setError(lang["mess_http_error"].." ("..tostring(status)..")")
+      responseStr = nil
+      response = nil
       return false
     elseif status == 408 then
       setError(lang["mess_timeout"])
+      responseStr = nil
+      response = nil
       return false
     elseif status == 422 then
       setError(lang["mess_parse_error"])
+      responseStr = nil
+      response = nil
       return false
     elseif not status then
       setError(lang["mess_no_response"])
+      responseStr = nil
+      response = nil
       return false
     else
       setError(lang["mess_http_error"].." ("..tostring(status)..")")
+      responseStr = nil
+      response = nil
       return false
     end
     
@@ -1810,10 +1868,15 @@ function searchHash()
   end
   
   if not openSub.getMovieHash() then
+    if openSub.file.protocol and openSub.file.protocol ~= "file" and not openSub.file.is_archive then
+      setMessage(error_tag(lang["mess_not_local"]))
+      searchIMBD()
+    end
     return
   end
   
   if openSub.file.hash then
+    openSub.itemStore = nil
     openSub.checkSession()
     openSub.request("SearchSubtitlesByHash")
     display_subtitles()
@@ -1835,6 +1898,7 @@ function searchIMBD()
   end
   
   if openSub.movie.title ~= "" then
+    openSub.itemStore = nil
     openSub.checkSession()
     openSub.request("SearchSubtitles")
     display_subtitles()
@@ -1850,7 +1914,15 @@ function display_subtitles()
     setMessage("<b>"..lang["mess_complete"]..":</b> "..
       lang["mess_no_res"])
   elseif openSub.itemStore then 
+    local last_yield = nil
+    local keep_running = true
     for i, item in ipairs(openSub.itemStore) do
+      if i % 25 == 0 then
+        last_yield, keep_running = ui_yield_if_needed(last_yield, 15)
+        if keep_running == false then
+          break
+        end
+      end
       mainlist:add_value(
       (item.SubFileName or "???")..
       " ["..(item.SubLanguageID or "?").."]"..
@@ -1950,10 +2022,12 @@ function download_subtitles()
   -- Determine if the path to the video file is accessible for writing
   
   local target = openSub.file.dir..subfileName
-  
+  local partial_target = target..".part"
+
   if not file_touch(target) then
     if openSub.conf.dirPath then
       target =  openSub.conf.dirPath..slash..subfileName
+      partial_target = target..".part"
       message = "<br>"..
         error_tag(lang["mess_save_fail"].." &nbsp;"..
         "<a href='"..vlc.strings.make_uri(
@@ -1977,27 +2051,34 @@ function download_subtitles()
     return false
   end
 
-  local subfile, sub_err = io.open(target, "wb")
+  local subfile, sub_err = io.open(partial_target, "wb")
   if not subfile then
     vlc.msg.err("[VLsub] Unable to open subtitle for writing: "..tostring(sub_err))
-    setError(lang["mess_download_io_error"].." &nbsp;<a href='"..item.ZipDownloadLink.."'>"..lang["mess_manual_fallback"].."</a>")
+    setError(lang["mess_download_io_error"]..": "..tostring(partial_target).." &nbsp;<a href='"..item.ZipDownloadLink.."'>"..lang["mess_manual_fallback"].."</a>")
     return false
   end
   
   local data = stream:read(65536)
   local write_iterations = 0
   local max_iterations = 32768
+  local last_yield = nil
+  local keep_running = true
   while data and #data > 0 and write_iterations < max_iterations do
     local ok, write_err = pcall(function() subfile:write(data) end)
     if not ok then
       vlc.msg.err("[VLsub] Write error: "..tostring(write_err))
       subfile:close()
-      setError(lang["mess_download_io_error"].." &nbsp;<a href='"..item.ZipDownloadLink.."'>"..lang["mess_manual_fallback"].."</a>")
+      os.remove(partial_target)
+      setError(lang["mess_download_io_error"]..": "..tostring(partial_target).." &nbsp;<a href='"..item.ZipDownloadLink.."'>"..lang["mess_manual_fallback"].."</a>")
       return false
     end
     write_iterations = write_iterations + 1
-    if write_iterations % 8 == 0 then
-      ui_yield()
+    last_yield, keep_running = ui_yield_if_needed(last_yield, 15)
+    if keep_running == false then
+      subfile:close()
+      os.remove(partial_target)
+      setError(lang["mess_timeout"])
+      return false
     end
     data = stream:read(65536)
   end
@@ -2005,12 +2086,21 @@ function download_subtitles()
   if write_iterations >= max_iterations then
     vlc.msg.err("[VLsub] Download aborted after too many chunks")
     subfile:close()
+    os.remove(partial_target)
     setError(lang["mess_timeout"])
     return false
   end
   
   subfile:flush()
   subfile:close()
+
+  local rename_ok, rename_err = os.rename(partial_target, target)
+  if not rename_ok then
+    vlc.msg.err("[VLsub] Unable to finalize subtitle file: "..tostring(rename_err))
+    os.remove(partial_target)
+    setError(lang["mess_rename_failed"]..": "..tostring(target).." &nbsp;<a href='"..item.ZipDownloadLink.."'>"..lang["mess_manual_fallback"].."</a>")
+    return false
+  end
   
   stream = nil
   collectgarbage()
@@ -2040,6 +2130,7 @@ function dump_zip(url, dir, subfileName)
   end
   
   local tmpFileName = dir..slash..subfileName..".gz"
+  local partialTmp = tmpFileName..".part"
   if not file_touch(tmpFileName) then
     vlc.msg.dbg("[VLsub] Cant touch:"..tmpFileName)
     if openSub.conf.os == "win" then
@@ -2049,13 +2140,14 @@ function dump_zip(url, dir, subfileName)
     else
       -- using tmp dir to download
       tmpFileName = "/tmp/"..subfileName..".gz"
+      partialTmp = tmpFileName..".part"
       vlc.msg.dbg("[VLsub] Fixing to:"..tmpFileName)
     end
   end
-  local tmpFile, open_err = io.open(tmpFileName, "wb")
+  local tmpFile, open_err = io.open(partialTmp, "wb")
   if not tmpFile then
     vlc.msg.err("[VLsub] Unable to open temp file: "..tostring(open_err))
-    setError(lang["mess_download_io_error"].." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
+    setError(lang["mess_download_io_error"]..": "..tostring(partialTmp).." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
     return false
   end
   
@@ -2063,11 +2155,20 @@ function dump_zip(url, dir, subfileName)
   if not ok then
     vlc.msg.err("[VLsub] Unable to write temp file: "..tostring(write_err))
     tmpFile:close()
-    setError(lang["mess_download_io_error"].." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
+    os.remove(partialTmp)
+    setError(lang["mess_download_io_error"]..": "..tostring(partialTmp).." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
     return false
   end
   tmpFile:flush()
   tmpFile:close()
+  local rename_ok, rename_err = os.rename(partialTmp, tmpFileName)
+  if not rename_ok then
+    vlc.msg.err("[VLsub] Unable to finalize temp file: "..tostring(rename_err))
+    os.remove(partialTmp)
+    setError(lang["mess_rename_failed"]..": "..tostring(tmpFileName).." &nbsp;<a href='"..url.."'>"..lang["mess_manual_fallback"].."</a>")
+    return false
+  end
+  resp = nil
   tmpFile = nil
   collectgarbage()
   return "zip://"..make_uri(tmpFileName)
@@ -2143,6 +2244,14 @@ function get(url)
     setError(lang["mess_timeout"])
     log_err("HTTP timeout while requesting "..tostring(url))
     return false
+  elseif status == 429 or status == 503 then
+    setError(lang["mess_overloaded"])
+    log_err("HTTP overloaded or rate limited while requesting "..tostring(url))
+    return false
+  elseif status and status >= 400 and status < 500 then
+    setError(lang["mess_http_error"].." ("..tostring(status)..")")
+    log_err("HTTP client error "..tostring(status).." for "..tostring(url))
+    return false
   elseif status == 422 then
     setError(lang["mess_parse_error"])
     log_err("HTTP parse error while requesting "..tostring(url))
@@ -2158,10 +2267,12 @@ function get(url)
   end
 end
 
-local function http_req_once(host, port, request, protocol, tls_warned)
+local function http_req_once(host, port, request, protocol, tls_warned, redirect_count)
   local connect_fn = vlc.net.connect_tcp
   local requested_https = protocol == "https"
   local tls_notice_shown = tls_warned or false
+  local redirects = redirect_count or 0
+  local MAX_REDIRECTS = 5
 
   if requested_https then
     if vlc.net.connect_ssl then
@@ -2334,6 +2445,11 @@ local function http_req_once(host, port, request, protocol, tls_warned)
       return 499, ""
     end
     response = vlc.net.recv(fd, 1024)
+    chunk_yield, keep_running = ui_yield_if_needed(chunk_yield, 15)
+    if keep_running == false then
+      close_socket()
+      return 499, ""
+    end
   end
 
   if not header and buf ~= "" then
@@ -2386,19 +2502,39 @@ local function http_req_once(host, port, request, protocol, tls_warned)
     return 422, ""
   end
   
-  if status == 301 
+  if (status == 301 or status == 302 or status == 307 or status == 308)
   and header and header["Location"] then
-    local host_redirect, path_redirect = parse_url(trim(header["Location"]))
+    if redirects >= MAX_REDIRECTS then
+      log_err("HTTP redirect limit reached for host "..tostring(host))
+      close_socket()
+      return 310, ""
+    end
+    local location = trim(header["Location"])
+    local host_redirect, path_redirect, _, proto_redirect = parse_url(location)
+    host_redirect = host_redirect or host
+    path_redirect = path_redirect or location
+    local new_protocol = proto_redirect or protocol
+    local new_port = port
+    if proto_redirect == "https" then
+      new_port = 443
+    elseif proto_redirect == "http" then
+      new_port = 80
+    end
     request = request
     :gsub("^([^%s]+ )([^%s]+)", "%1"..path_redirect)
     :gsub("(Host: )([^\n]*)", "%1"..host_redirect)
 
     close_socket()
-    return http_req_once(host_redirect, port, request, protocol, tls_notice_shown)
+    return http_req_once(host_redirect, new_port, request, new_protocol, tls_notice_shown, redirects + 1)
   end
 
   close_socket()
-  return status, body
+  local body_out = body
+  chunk_state = nil
+  buf = nil
+  response = nil
+  body = nil
+  return status, body_out
 end
 
 function http_req(host, port, request, protocol)

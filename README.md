@@ -38,6 +38,11 @@ To install the translations, copy the directory named "locale" into the VLSub wo
 * Pick a result and click **Download selection**; confirm the subtitle saves next to the video (or in the configured working directory) and loads automatically.
 * Repeat a search with network temporarily unavailable to confirm the extension reports an error quickly instead of hanging.
 * Optional: enable "Enable debug logging" in the Config screen to surface additional diagnostics in VLC logs while troubleshooting; the setting is saved with other VLSub options.
+* Manual test checklist for regressions:
+  * Redirect handling: point to a known redirecting subtitle link and confirm the download completes without user action.
+  * Rate limiting: when the server returns 429/503, verify the UI shows “OpenSubtitles is rate-limiting or busy; please try again later.”
+  * Atomic writes: simulate a locked target subtitle file and confirm VLSub reports the path and falls back to manual download without leaving partial files.
+  * Repeated searches: perform multiple back-to-back searches (hash and name) and ensure the UI remains responsive without growing memory noticeably.
 
 #### Limitation:
 
@@ -49,6 +54,11 @@ To install the translations, copy the directory named "locale" into the VLSub wo
 -> If possible, use a directory with english (ASCII) characters only to store your videos (on Windows only).
 
 #### Changelog:
+
+##### 2024-05-05 (version 0.10.6)
+- Follow OpenSubtitles redirects safely, surface rate limiting clearly, and avoid partial downloads by writing subtitles atomically.
+- Improve cancellation yielding during downloads and large list updates, and clamp config timeouts to safe ranges.
+- Harden temp file handling with clearer, actionable error messages for manual fallback.
 
 ##### 2024-05-02 (version 0.10.5)
 - Close sockets after each request, yield during slow headers, and cap chunked-transfer buffers to avoid freezes or leaks.
