@@ -37,21 +37,23 @@ To install the translations, copy the directory named "locale" into the VLSub wo
 * With the same file, run **Search by name** (adjust the title/season/episode fields) and verify results load without freezing.
 * Pick a result and click **Download selection**; confirm the subtitle saves next to the video (or in the configured working directory) and loads automatically.
 * Repeat a search with network temporarily unavailable to confirm the extension reports an error quickly instead of hanging.
+* Optional: enable "Enable debug logging" in the Config screen to surface additional diagnostics in VLC logs while troubleshooting; the setting is saved with other VLSub options.
 
 #### Limitation:
 
 * Due to some bugs on Windows, if the path to your video contain non-english characters, the extension will not be able to save subtitles in this directory automatically (it will propose you to save it manually) and the "search by hash" method might be slower.
 * Hash search requires a local file; remote/network streams must use name search instead.
+* VLC 3.x is the main supported target. VLC 4.x nightlies may lack full Lua HTTPS support; when TLS/SSL is missing VLSub will fall back to HTTP where possible and report the limitation.
 * Very old VLC 2.1 builds without the Lua `net` module remain unsupported.
 
 -> If possible, use a directory with english (ASCII) characters only to store your videos (on Windows only).
 
 #### Changelog:
 
-##### 2025-12-29 (version 0.10.3)
-- Add bounded HTTP timeouts and retries to avoid UI freezes when OpenSubtitles is slow.
-- Improve hash calculation responsiveness for large files and block hashing on non-local streams.
-- Add structured debug logging hook and safer error messaging for stalled network calls.
+##### 2024-05-01 (version 0.10.4)
+- Harden chunked HTTP transfer parsing to avoid crashes on partial or malformed responses.
+- Gracefully fall back to HTTP when TLS/SSL is unavailable, with clearer diagnostics surfaced in the UI and VLC debug log.
+- Bound hash and download loops to keep VLC responsive, added configurable debug logging, and improved subtitle write failure messaging with manual fallback guidance.
 
 ##### 2017-01-20 (version 0.10.2)
 - Fixed a bug with subtitle downloading with HTTP 1.1
