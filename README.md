@@ -8,21 +8,17 @@ Author: Guillaume Le Maout
 Contact: http://addons.videolan.org/messages/?action=newmessage&username=exebetche  
 Bug report: http://addons.videolan.org/content/show.php/?content=148752  
 
-#### INSTALLATION:
-Vlsub doesn't work on Vlc 2.1, use one of these instead:
-* [vlc 2.0](http://download.videolan.org/pub/videolan/vlc/2.0.8/)
-* [vlc 2.2](https://www.videolan.org/vlc/releases/2.2.0.html)
-
+#### INSTALLATION (VLC 3.x and later):
 Create a directory "extensions" at this location if it doesn't exists, then extract the file "vlsub.lua" from the archive inside:
-* Windows (all users): %ProgramFiles%\VideoLAN\VLC\lua\extensions\
-* Windows (current user): %APPDATA%\vlc\lua\extensions\
+* Windows (all users): %ProgramFiles%\\VideoLAN\\VLC\\lua\\extensions\\
+* Windows (current user): %APPDATA%\\vlc\\lua\\extensions\\
 * Linux (all users): /usr/lib/vlc/lua/extensions/
 * Linux (current user): ~/.local/share/vlc/lua/extensions/
 * Mac OS X (all users): /Applications/VLC.app/Contents/MacOS/share/lua/extensions/
 * Mac OS X (current user): /Users/%your_name%/Library/Application Support/org.videolan.vlc/lua/extensions/
 
 To install the translations, copy the directory named "locale" into the VLSub working directory :
-* To know this directory, once VLsub is installed as explained above, launCh VLC and open VLsub, and click "show config", and you will see it there.
+* To know this directory, once VLsub is installed as explained above, launch VLC and open VLsub, and click "show config", and you will see it there.
 
 #### USAGE:
 * Start Vlc
@@ -34,13 +30,28 @@ To install the translations, copy the directory named "locale" into the VLSub wo
 * That's it, the subtitles should appear on your video. 
 * If you're not happy with your subtitles (wrong sync etc), you can select an other one and click "Download" again, that will erase the previous one and load it automatically.
 
+#### How to test
+* Install the extension and `locale/` folder as described above.
+* Launch VLC with verbose logs (`vlc --verbose 2` or Tools > Messages set to at least 2) to capture debug output in case of issues.
+* With a **local video file** playing, open VLSub (View > VLSub) and run **Search by hash**; ensure results appear and VLC stays responsive.
+* With the same file, run **Search by name** (adjust the title/season/episode fields) and verify results load without freezing.
+* Pick a result and click **Download selection**; confirm the subtitle saves next to the video (or in the configured working directory) and loads automatically.
+* Repeat a search with network temporarily unavailable to confirm the extension reports an error quickly instead of hanging.
+
 #### Limitation:
 
-Due to some bugs on Windows, if the path to your video contain non-english characters, the extension will not be able to save subtitles in this directory automatically (it will propose you to save it manually) and the "search by hash" method might be slower.
+* Due to some bugs on Windows, if the path to your video contain non-english characters, the extension will not be able to save subtitles in this directory automatically (it will propose you to save it manually) and the "search by hash" method might be slower.
+* Hash search requires a local file; remote/network streams must use name search instead.
+* Very old VLC 2.1 builds without the Lua `net` module remain unsupported.
 
 -> If possible, use a directory with english (ASCII) characters only to store your videos (on Windows only).
 
 #### Changelog:
+
+##### 2025-12-29 (version 0.10.3)
+- Add bounded HTTP timeouts and retries to avoid UI freezes when OpenSubtitles is slow.
+- Improve hash calculation responsiveness for large files and block hashing on non-local streams.
+- Add structured debug logging hook and safer error messaging for stalled network calls.
 
 ##### 2017-01-20 (version 0.10.2)
 - Fixed a bug with subtitle downloading with HTTP 1.1
